@@ -115,6 +115,13 @@ static int event_scan(bool connect)
         printk("Scan falied\n\r");
         return err;
     }
+
+    err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+    if (err) {
+        printk("Scanning failed to start (err %d)\n\r", err);
+        return err;
+    }
+
     printk("Scan started\n\r");
 
     return err;
@@ -350,12 +357,6 @@ static int scan_param_set(void)
     err = bt_scan_filter_enable(BT_SCAN_UUID_FILTER, false);
     if (err) {
         printk("Filters cannot be turned on (err %d)\n\r", err);
-        return err;
-    }
-
-    err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-    if (err) {
-        printk("Scanning failed to start (err %d)\n\r", err);
         return err;
     }
 
