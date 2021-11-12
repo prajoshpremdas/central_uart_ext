@@ -44,20 +44,6 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define UART_WAIT_FOR_BUF_DELAY K_MSEC(50)
 #define UART_RX_TIMEOUT 50
 
-static const struct device *uart;
-static struct k_delayed_work uart_work;
-
-K_SEM_DEFINE(nus_write_sem, 0, 1);
-
-struct uart_data_t {
-    void *fifo_reserved;
-    uint8_t  data[UART_BUF_SIZE];
-    uint16_t len;
-};
-
-static K_FIFO_DEFINE(fifo_uart_tx_data);
-static K_FIFO_DEFINE(fifo_uart_rx_data);
-
 static struct bt_conn *default_conn;
 static struct bt_nus_client nus_client;
 
@@ -142,207 +128,14 @@ static void event_disconnect(void)
 
 static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 {
-    struct uart_data_t *buf;
 
-    /* Retrieve buffer context. */
-    buf = CONTAINER_OF(data, struct uart_data_t, data);
-    k_free(buf);
-
-    k_sem_give(&nus_write_sem);
-
-    if (err) {
-        printk("ATT error code: 0x%02X\n\r", err);
-    }
 }
 
 static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 {
-    int err;
-
-    for (uint16_t pos = 0; pos != len;) {
-        struct uart_data_t *tx = k_malloc(sizeof(*tx));
-
-        if (!tx) {
-            printk("Not able to allocate UART send data buffer\n\r");
-            return BT_GATT_ITER_CONTINUE;
-        }
-
-        /* Keep the last byte of TX buffer for potential LF char. */
-        size_t tx_data_size = sizeof(tx->data) - 1;
-
-        if ((len - pos) > tx_data_size) {
-            tx->len = tx_data_size;
-        } else {
-            tx->len = (len - pos);
-        }
-
-        memcpy(tx->data, &data[pos], tx->len);
-
-        pos += tx->len;
-
-        /* Append the LF character when the CR character triggered
-         * transmission from the peer.
-         */
-        if ((pos == len) && (data[len - 1] == '\r')) {
-            tx->data[tx->len] = '\n';
-            tx->len++;
-        }
-
-        err = uart_tx(uart, tx->data, tx->len, SYS_FOREVER_MS);
-        if (err) {
-            k_fifo_put(&fifo_uart_tx_data, tx);
-        }
-    }
-
     return BT_GATT_ITER_CONTINUE;
 }
 
-static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
-{
-    ARG_UNUSED(dev);
-
-    static uint8_t *current_buf;
-    static size_t aborted_len;
-    static bool buf_release;
-    struct uart_data_t *buf;
-    static uint8_t *aborted_buf;
-
-    switch (evt->type) {
-    case UART_TX_DONE:
-        if ((evt->data.tx.len == 0) ||
-            (!evt->data.tx.buf)) {
-            return;
-        }
-
-        if (aborted_buf) {
-            buf = CONTAINER_OF(aborted_buf, struct uart_data_t, data);
-            aborted_buf = NULL;
-            aborted_len = 0;
-        } else {
-            buf = CONTAINER_OF(evt->data.tx.buf,
-                       struct uart_data_t,
-                       data);
-        }
-
-        k_free(buf);
-
-        buf = k_fifo_get(&fifo_uart_tx_data, K_NO_WAIT);
-        if (!buf) {
-            return;
-        }
-
-        if (uart_tx(uart, buf->data, buf->len, SYS_FOREVER_MS)) {
-            printk("Failed to send data over UART\n\r");
-        }
-        break;
-
-    case UART_RX_RDY:
-        buf = CONTAINER_OF(evt->data.rx.buf, struct uart_data_t, data);
-        buf->len += evt->data.rx.len;
-        buf_release = false;
-
-        if (buf->len == UART_BUF_SIZE) {
-            k_fifo_put(&fifo_uart_rx_data, buf);
-        } else if ((evt->data.rx.buf[buf->len - 1] == '\n') ||
-              (evt->data.rx.buf[buf->len - 1] == '\r')) {
-            k_fifo_put(&fifo_uart_rx_data, buf);
-            current_buf = evt->data.rx.buf;
-            buf_release = true;
-            uart_rx_disable(uart);
-        }
-        break;
-
-    case UART_RX_DISABLED:
-        buf = k_malloc(sizeof(*buf));
-        if (buf) {
-            buf->len = 0;
-        } else {
-            printk("Not able to allocate UART receive buffer\n\r");
-            k_delayed_work_submit(&uart_work, UART_WAIT_FOR_BUF_DELAY);
-            return;
-        }
-
-        uart_rx_enable(uart, buf->data, sizeof(buf->data), UART_RX_TIMEOUT);
-        break;
-
-    case UART_RX_BUF_REQUEST:
-        buf = k_malloc(sizeof(*buf));
-        if (buf) {
-            buf->len = 0;
-            uart_rx_buf_rsp(uart, buf->data, sizeof(buf->data));
-        } else {
-            printk("Not able to allocate UART receive buffer\n\r");
-        }
-        break;
-
-    case UART_RX_BUF_RELEASED:
-        buf = CONTAINER_OF(evt->data.rx_buf.buf, struct uart_data_t, data);
-        if (buf_release && (current_buf != evt->data.rx_buf.buf)) {
-            k_free(buf);
-            buf_release = false;
-            current_buf = NULL;
-        }
-        break;
-
-    case UART_TX_ABORTED:
-            if (!aborted_buf) {
-                aborted_buf = (uint8_t *)evt->data.tx.buf;
-            }
-
-            aborted_len += evt->data.tx.len;
-            buf = CONTAINER_OF(aborted_buf, struct uart_data_t, data);
-            uart_tx(uart, &buf->data[aborted_len],
-                buf->len - aborted_len, SYS_FOREVER_MS);
-        break;
-
-    default:
-        break;
-    }
-}
-
-static void uart_work_handler(struct k_work *item)
-{
-    struct uart_data_t *buf;
-
-    buf = k_malloc(sizeof(*buf));
-    if (buf) {
-        buf->len = 0;
-    } else {
-        printk("Not able to allocate UART receive buffer\n\r");
-        k_delayed_work_submit(&uart_work, UART_WAIT_FOR_BUF_DELAY);
-        return;
-    }
-
-    uart_rx_enable(uart, buf->data, sizeof(buf->data), UART_RX_TIMEOUT);
-}
-
-static int uart_init(void)
-{
-    int err;
-    struct uart_data_t *rx;
-
-    uart = device_get_binding(DT_LABEL(DT_NODELABEL(uart1)));
-    if (!uart) {
-        printk("UART binding failed\n\r");
-        return -ENXIO;
-    }
-
-    rx = k_malloc(sizeof(*rx));
-    if (rx) {
-        rx->len = 0;
-    } else {
-        return -ENOMEM;
-    }
-
-    k_delayed_work_init(&uart_work, uart_work_handler);
-
-    err = uart_callback_set(uart, uart_cb, NULL);
-    if (err) {
-        return err;
-    }
-
-    return uart_rx_enable(uart, rx->data, sizeof(rx->data), UART_RX_TIMEOUT);
-}
 
 static void discovery_complete(struct bt_gatt_dm *dm, void *context)
 {
@@ -616,7 +409,7 @@ static void bt_ready(int err)
 
     bt_conn_cb_register(&conn_callbacks);
 
-    int (*module_init[])(void) = {uart_init, scan_ble_init, nus_client_init};
+    int (*module_init[])(void) = {scan_ble_init, nus_client_init};
     for (size_t i = 0; i < ARRAY_SIZE(module_init); i++) {
         err = (*module_init[i])();
         if (err) {
@@ -626,13 +419,6 @@ static void bt_ready(int err)
     }
 
     printk("Starting Bluetooth Central UART example\n\r");
-
-    /*err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-    if (err) {
-        printk("Scanning failed to start (err %d)\n\r", err);
-        return;
-    }
-    printk("Scanning successfully started\n\r");*/
 
     buttons_init();
 }
@@ -652,23 +438,4 @@ void main(void)
         printk("Bluetooth init failed (err %d)\n\r", err);
         return;
     }
-
-#if 0
-    for (;;) {
-        /* Wait indefinitely for data to be sent over Bluetooth */
-        struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
-                             K_FOREVER);
-
-        err = bt_nus_client_send(&nus_client, buf->data, buf->len);
-        if (err) {
-            printk("Failed to send data over BLE connection"
-                "(err %d)\n\r", err);
-        }
-
-        err = k_sem_take(&nus_write_sem, NUS_WRITE_TIMEOUT);
-        if (err) {
-            printk("NUS send timeout\n\r");
-        }
-    }
-#endif
 }
