@@ -56,6 +56,7 @@ static struct button_handler button = {
 static int scan_param_set(void);
 static int event_scan(bool connect);
 static void event_disconnect(void);
+static int event_scan_stop(void);
 
 static void button_handler_cb(uint32_t button_state, uint32_t has_changed)
 {
@@ -66,6 +67,7 @@ static void button_handler_cb(uint32_t button_state, uint32_t has_changed)
         event_scan(false);
     } else if (buttons & DK_BTN2_MSK) {
         printk("\nStop scan\n");
+        event_scan_stop();
     } else if (buttons & DK_BTN3_MSK) {
         printk("\nScan and connect\n");
         event_scan(true);
@@ -124,6 +126,19 @@ static void event_disconnect(void)
     if (ret != 0) {
         printk("disconnect error %d\n\r", ret);
     }
+}
+
+static int event_scan_stop(void)
+{
+    int err;
+
+    err = bt_scan_stop();
+    if (err != 0) {
+        printk("Stop LE scan failed (err %d)\n\r", err);
+    }
+    printk("Scanning stopped\n\r");
+
+    return err;
 }
 
 static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
@@ -271,12 +286,11 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
                   struct bt_scan_filter_match *filter_match,
                   bool connectable)
 {
-    char addr[BT_ADDR_LE_STR_LEN];
-
-    bt_addr_le_to_str(device_info->recv_info->addr, addr, sizeof(addr));
-
-    printk("Filters matched. Address: %s connectable: %d\n\r",
-        log_strdup(addr), connectable);
+    printk("Beacon -> ");
+    for (uint8_t i = 0; i < 6; i++) {
+        printk("%02x ",device_info->recv_info->addr->a.val[i]);
+    }
+    printk(": RSSI %d\n\r", device_info->recv_info->rssi);
 }
 
 static void scan_connecting_error(struct bt_scan_device_info *device_info)
