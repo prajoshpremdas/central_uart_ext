@@ -403,7 +403,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     char addr[BT_ADDR_LE_STR_LEN];
-    int err;
+    //int err;
 
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
@@ -417,10 +417,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     bt_conn_unref(default_conn);
     default_conn = NULL;
 
-    err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+    /*err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
     if (err) {
         printk("Scanning failed to start (err %d)\n\r", err);
-    }
+    }*/
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -569,19 +569,10 @@ static struct bt_conn_auth_cb conn_auth_callbacks = {
     .pairing_failed = pairing_failed
 };
 
-void main(void)
+static void bt_ready(int err)
 {
-    int err;
-
-    err = bt_conn_auth_cb_register(&conn_auth_callbacks);
     if (err) {
-        printk("Failed to register authorization callbacks\n\r");
-        return;
-    }
-
-    err = bt_enable(NULL);
-    if (err) {
-        printk("Bluetooth init failed (err %d)\n\r", err);
+        printk("BLE failed %d\r\n", err);
         return;
     }
     printk("Bluetooth initialized\n\r");
@@ -596,22 +587,38 @@ void main(void)
     for (size_t i = 0; i < ARRAY_SIZE(module_init); i++) {
         err = (*module_init[i])();
         if (err) {
+            printk("failed func %d\n\r",i);
             return;
         }
     }
 
     printk("Starting Bluetooth Central UART example\n\r");
 
-
     err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
     if (err) {
         printk("Scanning failed to start (err %d)\n\r", err);
         return;
     }
-
     printk("Scanning successfully started\n\r");
 
     buttons_init();
+}
+
+void main(void)
+{
+    int err;
+
+    err = bt_conn_auth_cb_register(&conn_auth_callbacks);
+    if (err) {
+        printk("Failed to register authorization callbacks\n\r");
+        return;
+    }
+
+    err = bt_enable(bt_ready);
+    if (err) {
+        printk("Bluetooth init failed (err %d)\n\r", err);
+        return;
+    }
 
 #if 0
     for (;;) {
