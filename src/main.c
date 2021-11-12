@@ -29,6 +29,7 @@
 #include <drivers/uart.h>
 
 #include <logging/log.h>
+#include <dk_buttons_and_leds.h>
 
 #define LOG_MODULE_NAME central_uart
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -59,6 +60,57 @@ static K_FIFO_DEFINE(fifo_uart_rx_data);
 
 static struct bt_conn *default_conn;
 static struct bt_nus_client nus_client;
+
+static void button_handler_cb(uint32_t button_state, uint32_t has_changed);
+
+static struct button_handler button = {
+    .cb = button_handler_cb,
+};
+
+
+static void event_disconnect(void);
+
+static void button_handler_cb(uint32_t button_state, uint32_t has_changed)
+{
+    uint32_t buttons = button_state & has_changed;
+
+    if (buttons & DK_BTN1_MSK) {
+        printk("\nScan only\n");
+    } else if (buttons & DK_BTN2_MSK) {
+        printk("\nStop scan\n");
+    } else if (buttons & DK_BTN3_MSK) {
+        printk("\nScan and connect\n");
+    } else if (buttons & DK_BTN4_MSK) {
+        printk("\nDisconnect\n");
+        event_disconnect();
+    } else {
+        return;
+    }
+}
+
+static void buttons_init(void)
+{
+    int err;
+
+    err = dk_buttons_init(NULL);
+    if (err) {
+        printk("Buttons initialization failed.\n");
+        return;
+    }
+
+    /* Add dynamic buttons handler. Buttons should be activated only when
+     * during the board role choosing.
+     */
+    dk_button_handler_add(&button);
+}
+
+static void event_disconnect(void)
+{
+    int ret = bt_conn_disconnect(default_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+    if (ret != 0) {
+        printk("disconnect error %d\n\r", ret);
+    }
+}
 
 static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 {
@@ -559,6 +611,9 @@ void main(void)
 
     printk("Scanning successfully started\n\r");
 
+    buttons_init();
+
+#if 0
     for (;;) {
         /* Wait indefinitely for data to be sent over Bluetooth */
         struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
@@ -575,4 +630,5 @@ void main(void)
             printk("NUS send timeout\n\r");
         }
     }
+#endif
 }
