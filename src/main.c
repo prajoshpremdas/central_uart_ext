@@ -338,6 +338,8 @@ static int scan_ble_init(void)
 {
     int err = 0;
 
+    bt_scan_cb_register(&scan_cb);
+
     printk("Scan module initialized\n\r");
     return err;
 }
@@ -345,8 +347,6 @@ static int scan_ble_init(void)
 static int scan_param_set(void)
 {
     int err = 0;
-
-    bt_scan_cb_register(&scan_cb);
 
     err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_UUID, BT_UUID_NUS_SERVICE);
     if (err) {
