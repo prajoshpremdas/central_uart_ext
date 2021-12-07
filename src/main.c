@@ -34,6 +34,12 @@
 #define LOG_MODULE_NAME central_uart
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
+#define BT_UUID_THROUGHPUT                                                    \
+    BT_UUID_DECLARE_128(0xBB, 0x4A, 0xFF, 0x4F, 0xAD, 0x03, 0x41, 0x5D, 0xA9, \
+                        0x6C, 0x9D, 0x6C, 0xDD, 0xDA, 0x83, 0x04)
+
+#define BT_UUID_THROUGHPUT_CHAR BT_UUID_DECLARE_16(0x1524)
+
 /* UART payload buffer element size. */
 #define UART_BUF_SIZE 20
 
@@ -98,22 +104,11 @@ static void buttons_init(void)
 static int event_scan(bool connect)
 {
     int err = 0;
-    struct bt_scan_init_param scan_init = {
-        .connect_if_match = 1,
-    };
 
     if (connect) {
-        scan_init.connect_if_match = 1;
+        set_connect_if_match(true);
     } else {
-        scan_init.connect_if_match = 0;
-    }
-
-    bt_scan_init(&scan_init);
-
-    err = scan_param_set();
-    if (err) {
-        printk("Scan falied\n\r");
-        return err;
+        set_connect_if_match(false);
     }
 
     err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
@@ -197,7 +192,7 @@ static void gatt_discover(struct bt_conn *conn)
     }
 
     err = bt_gatt_dm_start(conn,
-                   BT_UUID_NUS_SERVICE,
+                   BT_UUID_THROUGHPUT_CHAR,
                    &discovery_cb,
                    &nus_client);
     if (err) {
@@ -348,7 +343,7 @@ static int scan_param_set(void)
 {
     int err = 0;
 
-    err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_UUID, BT_UUID_NUS_SERVICE);
+    err = bt_scan_filter_add(BT_SCAN_FILTER_TYPE_UUID, BT_UUID_THROUGHPUT);
     if (err) {
         printk("Scanning filters cannot be set (err %d)\n\r", err);
         return err;
@@ -441,6 +436,9 @@ static void bt_ready(int err)
 void main(void)
 {
     int err;
+    struct bt_scan_init_param scan_init = {
+        .connect_if_match = 0,
+    };
 
     err = bt_conn_auth_cb_register(&conn_auth_callbacks);
     if (err) {
@@ -452,5 +450,11 @@ void main(void)
     if (err) {
         printk("Bluetooth init failed (err %d)\n\r", err);
         return;
+    }
+
+    bt_scan_init(&scan_init);
+    err = scan_param_set();
+    if (err) {
+        printk("Scan falied\n\r");
     }
 }
